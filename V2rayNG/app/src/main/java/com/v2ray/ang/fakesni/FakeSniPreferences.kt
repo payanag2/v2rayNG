@@ -2,7 +2,7 @@ package com.v2ray.ang.fakesni
 
 import android.content.Context
 
-/** Persistent settings for the integrated FakeSNI layer. */
+/** Persistent settings matching the standalone FakeSNI configuration. */
 class FakeSniPreferences(context: Context) {
     private val prefs = context.getSharedPreferences("integrated_fakesni", Context.MODE_PRIVATE)
 
@@ -10,14 +10,17 @@ class FakeSniPreferences(context: Context) {
         get() = prefs.getBoolean("enabled", false)
         set(value) = prefs.edit().putBoolean("enabled", value).apply()
 
-    var fakeSni: String
-        get() = prefs.getString("fakeSni", "hcaptcha.com") ?: "hcaptcha.com"
-        set(value) = prefs.edit().putString("fakeSni", value).apply()
+    var fakeSniHostname: String
+        get() = prefs.getString("fakeSniHostname", prefs.getString("fakeSni", "hcaptcha.com")) ?: "hcaptcha.com"
+        set(value) = prefs.edit().putString("fakeSniHostname", value).putString("fakeSni", value).apply()
 
-    /** Real upstream used by FakeSNI, in host:port form. */
-    var upstream: String
-        get() = prefs.getString("upstream", "104.19.229.21:443") ?: "104.19.229.21:443"
-        set(value) = prefs.edit().putString("upstream", value).apply()
+    var connectIp: String
+        get() = prefs.getString("connectIp", "104.19.229.21") ?: "104.19.229.21"
+        set(value) = prefs.edit().putString("connectIp", value).apply()
+
+    var connectPort: Int
+        get() = prefs.getInt("connectPort", 443)
+        set(value) = prefs.edit().putInt("connectPort", value.coerceIn(1, 65535)).apply()
 
     var listenPort: Int
         get() = prefs.getInt("listenPort", 40443)
