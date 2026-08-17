@@ -1,3 +1,5 @@
+import java.net.URL
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -129,7 +131,7 @@ tasks.register("downloadFakeSniAssets") {
             val target = File(assetsDir, name)
             if (!target.exists() || target.length() == 0L) {
                 logger.lifecycle("Downloading integrated FakeSNI binary: $name")
-                java.net.URL(url).openStream().use { input -> target.outputStream().use { output -> input.copyTo(output) } }
+                URL(url).openStream().use { input -> target.outputStream().use { output -> input.copyTo(output) } }
             }
             check(target.length() > 1024) { "FakeSNI asset $name was not downloaded correctly" }
         }
