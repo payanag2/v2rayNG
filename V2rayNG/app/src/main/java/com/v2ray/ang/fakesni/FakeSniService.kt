@@ -239,7 +239,8 @@ class FakeSniService : Service() {
     private fun cleanupProcessOnly() {
         process?.destroy()
         process = null
-        runSu("pkill -TERM -f '$BINARY_NAME' 2>/dev/null || true")
+        val binaryPath = File(filesDir, BINARY_NAME).absolutePath
+        runSu("pkill -TERM -f '$binaryPath' 2>/dev/null || true")
     }
 
     private fun cleanup() {
