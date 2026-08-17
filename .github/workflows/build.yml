@@ -40,9 +40,7 @@ jobs:
           --channel=0 \
           --install "ndk;29.0.14206865"
         echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
-        sed -i '10i\
-        \
-            ndkVersion = "29.0.14206865"' ${{ github.workspace }}/V2rayNG/app/build.gradle.kts
+        sed -i '/^android {/a\    ndkVersion = "29.0.14206865"' ${{ github.workspace }}/V2rayNG/app/build.gradle.kts
 
     - name: Restore cached libhevtun
       id: cache-libhevtun-restore
@@ -113,36 +111,12 @@ jobs:
         ./gradlew licenseFdroidReleaseReport
         ./gradlew assembleRelease
 
-    - name: Upload arm64-v8a APK
+    - name: Upload APKs
       if: success()
       uses: actions/upload-artifact@v7
       with:
-        name: arm64-v8a
-        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*arm64-v8a*.apk
-        if-no-files-found: error
-
-    - name: Upload armeabi-v7a APK
-      if: success()
-      uses: actions/upload-artifact@v7
-      with:
-        name: armeabi-v7a
-        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*armeabi-v7a*.apk
-        if-no-files-found: error
-
-    - name: Upload x86 APK
-      if: success()
-      uses: actions/upload-artifact@v7
-      with:
-        name: x86-apk
-        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*x86*.apk
-        if-no-files-found: error
-
-    - name: Upload universal APK
-      if: success()
-      uses: actions/upload-artifact@v7
-      with:
-        name: universal-apk
-        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*universal*.apk
+        name: v2rayNG-fakesni-apks
+        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*.apk
         if-no-files-found: error
 
   release:
@@ -150,17 +124,14 @@ jobs:
     if: needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Download all APK artifacts
+      - name: Download APK artifacts
         uses: actions/download-artifact@v8
         with:
-          path: release
+          name: v2rayNG-fakesni-apks
+          path: release-files
 
-      - name: Collect APK files
-        run: |
-          mkdir -p release-files
-          find release -type f -name '*.apk' -exec cp {} release-files/ \;
-          test -n "$(find release-files -type f -name '*.apk' -print -quit)"
-          ls -lh release-files
+      - name: Show APKs
+        run: ls -lh release-files
 
       - name: Generate release tag
         id: tag
