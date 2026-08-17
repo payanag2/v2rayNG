@@ -13,12 +13,11 @@ on:
 permissions:
   contents: write
 
-env:
-  HAS_RELEASE_KEYSTORE: ${{ secrets.APP_KEYSTORE_BASE64 != '' && secrets.APP_KEYSTORE_PASSWORD != '' && secrets.APP_KEYSTORE_ALIAS != '' && secrets.APP_KEY_PASSWORD != '' }}
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      HAS_RELEASE_KEYSTORE: ${{ secrets.APP_KEYSTORE_BASE64 != '' && secrets.APP_KEYSTORE_PASSWORD != '' && secrets.APP_KEYSTORE_ALIAS != '' && secrets.APP_KEY_PASSWORD != '' }}
 
     steps:
     - name: Checkout code
@@ -148,15 +147,19 @@ jobs:
   sign-and-release:
     needs: build
     runs-on: ubuntu-26.04
-    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != '' && env.HAS_RELEASE_KEYSTORE == 'true'
+    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    env:
+      HAS_RELEASE_KEYSTORE: ${{ secrets.APP_KEYSTORE_BASE64 != '' && secrets.APP_KEYSTORE_PASSWORD != '' && secrets.APP_KEYSTORE_ALIAS != '' && secrets.APP_KEY_PASSWORD != '' }}
 
     steps:
       - name: Download APK artifacts
+        if: env.HAS_RELEASE_KEYSTORE == 'true'
         uses: actions/download-artifact@v8
         with:
           path: release
 
       - name: Sign APK files
+        if: env.HAS_RELEASE_KEYSTORE == 'true'
         run: |
           printf '%s' "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
           KEY=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
@@ -168,6 +171,7 @@ jobs:
           gpg --armor --export "$KEY" > release-files/v2rayN-public-key.asc
 
       - name: Upload APKs, signatures and public key to release
+        if: env.HAS_RELEASE_KEYSTORE == 'true'
         uses: svenstaro/upload-release-action@v2
         with:
           file: release-files/*
