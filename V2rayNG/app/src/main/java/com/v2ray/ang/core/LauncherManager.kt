@@ -88,15 +88,25 @@ object LauncherManager {
         else context.toast(R.string.toast_services_start)
 
         val isRootMode = SettingsManager.isRootMode()
+        val fakeSniEnabled = FakeSniPreferences(context).enabled
+
         if (isRootMode && !RootManager.isRootAvailable()) {
             LogUtil.e(AppConfig.TAG, "LauncherManager: root mode requires root but none available")
             error(context.getString(R.string.toast_root_required))
         }
 
-        // FakeSNI uses a rooted local TLS proxy and UID-scoped OUTPUT REDIRECT rules.
-        // Root mode is intentionally excluded because Xray and FakeSNI would both be UID 0.
-        if (!isRootMode && FakeSniPreferences(context).enabled) {
-            LogUtil.i(AppConfig.TAG, "LauncherManager: starting integrated FakeSNI")
+        // Integrated FakeSNI itself requires root, but Xray must NOT run in v2rayNG's
+        // root mode: the REDIRECT rule identifies Xray traffic by v2rayNG's app UID.
+        if (fakeSniEnabled) {
+            if (!RootManager.isRootAvailable()) {
+                LogUtil.e(AppConfig.TAG, "LauncherManager: integrated FakeSNI requires root")
+                error("FakeSNI requires root access")
+            }
+            if (isRootMode) {
+                LogUtil.e(AppConfig.TAG, "LauncherManager: FakeSNI is incompatible with Xray root mode")
+                error("FakeSNI requires VPN/Proxy mode, not Xray Root mode")
+            }
+            LogUtil.i(AppConfig.TAG, "LauncherManager: starting integrated FakeSNI with root")
             FakeSniService.start(context)
         }
 
