@@ -12,7 +12,6 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.v2ray.ang.R
-import com.v2ray.ang.dto.entities.ProfileItem
 import com.v2ray.ang.handler.MmkvManager
 import java.io.File
 import java.net.Inet4Address
@@ -22,14 +21,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * Runs the same sni-spoofing binary used by payanag2/fakesni, but as a component
- * of v2rayNG. Traffic from the v2rayNG UID to the selected TLS server is redirected
- * to the local FakeSNI listener; FakeSNI then connects to the real server as root.
- */
+/** Integrated runner for the sni-spoofing binary from payanag2/fakesni. */
 class FakeSniService : Service() {
     companion object {
         const val ACTION_START = "com.v2ray.ang.fakesni.START"
@@ -41,8 +37,10 @@ class FakeSniService : Service() {
         private const val ARM7_ASSET = "sni-spoofing-arm7"
 
         fun start(context: android.content.Context) {
-            val intent = Intent(context, FakeSniService::class.java).setAction(ACTION_START)
-            androidx.core.content.ContextCompat.startForegroundService(context, intent)
+            androidx.core.content.ContextCompat.startForegroundService(
+                context,
+                Intent(context, FakeSniService::class.java).setAction(ACTION_START)
+            )
         }
 
         fun stop(context: android.content.Context) {
@@ -53,6 +51,8 @@ class FakeSniService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var process: Process? = null
     private var activeIps = emptyList<String>()
+    private var activeTargetPort: Int? = null
+    private var activeLocalPort: Int? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var restartJob: Job? = null
 
@@ -85,6 +85,7 @@ class FakeSniService : Service() {
 
     private suspend fun startProxy() {
         cleanupProcessOnly()
+        removeActiveRedirectRules()
 
         val guid = MmkvManager.getSelectServer() ?: run {
             log("No selected profile")
@@ -94,32 +95,34 @@ class FakeSniService : Service() {
             log("Cannot read selected profile")
             return
         }
-
         val prefs = FakeSniPreferences(this)
+
         if (profile.security?.lowercase() != "tls") {
             log("FakeSNI requires TLS; selected profile is not TLS")
             return
         }
-        if (profile.server.isNullOrBlank() || profile.serverPort.isNullOrBlank()) {
-            log("Selected profile has no server address/port")
+        val host = profile.server?.takeIf { it.isNotBlank() } ?: run {
+            log("Selected profile has no server address")
             return
         }
-
-        val port = profile.serverPort!!.toIntOrNull() ?: run {
+        val port = profile.serverPort?.toIntOrNull() ?: run {
             log("Invalid server port: ${profile.serverPort}")
             return
         }
-        val addresses = resolveIpv4(profile.server!!)
+
+        val addresses = resolveIpv4(host)
         if (addresses.isEmpty()) {
-            log("Could not resolve ${profile.server}")
+            log("Could not resolve $host")
             return
         }
+
         activeIps = addresses
+        activeTargetPort = port
+        activeLocalPort = prefs.listenPort
         installRedirectRules(addresses, port, prefs.listenPort)
 
-        val binary = extractBinary()
-        if (binary == null) {
-            removeRedirectRules(port, prefs.listenPort)
+        val binary = extractBinary() ?: run {
+            removeActiveRedirectRules()
             return
         }
 
@@ -141,7 +144,7 @@ class FakeSniService : Service() {
             }
         }
 
-        log("Target: ${profile.server}:$port → $connectIp:$port")
+        log("Target: $host:$port → $connectIp:$port")
         log("Fake SNI: ${prefs.fakeSni} / uTLS: ${prefs.utls} / injector: ${prefs.injector}")
         updateNotification("FakeSNI active: ${prefs.fakeSni}")
 
@@ -152,8 +155,7 @@ class FakeSniService : Service() {
         process = Runtime.getRuntime().exec(arrayOf("su", "-c", "sh '${script.absolutePath}'"))
         scope.launch { process?.errorStream?.bufferedReader()?.forEachLine { log(it) } }
         scope.launch { process?.inputStream?.bufferedReader()?.forEachLine { log(it) } }
-
-        registerNetworkMonitor(profile.server!!, port, prefs.listenPort)
+        registerNetworkMonitor(port, prefs.listenPort)
     }
 
     private fun extractBinary(): File? {
@@ -171,7 +173,8 @@ class FakeSniService : Service() {
             if (!target.exists() || target.length() == 0L || (assetLength > 0 && target.length() != assetLength)) {
                 assets.open(asset).use { input -> target.outputStream().use { output -> input.copyTo(output) } }
             }
-            Runtime.getRuntime().exec(arrayOf("su", "-c", "chmod 755 '${target.absolutePath}'")).waitFor(2, TimeUnit.SECONDS)
+            Runtime.getRuntime().exec(arrayOf("su", "-c", "chmod 755 '${target.absolutePath}'"))
+                .waitFor(2, TimeUnit.SECONDS)
             target
         } catch (e: Exception) {
             log("Binary install failed: ${e.message}")
@@ -191,23 +194,25 @@ class FakeSniService : Service() {
     private fun installRedirectRules(ips: List<String>, targetPort: Int, localPort: Int) {
         val uid = applicationInfo.uid
         ips.forEach { ip ->
-            val cmd = "iptables -t nat -C OUTPUT -p tcp -d '$ip' --dport $targetPort -m owner --uid-owner $uid -j REDIRECT --to-ports $localPort 2>/dev/null || " +
-                "iptables -t nat -A OUTPUT -p tcp -d '$ip' --dport $targetPort -m owner --uid-owner $uid -j REDIRECT --to-ports $localPort"
-            runSu(cmd)
+            val rule = "-p tcp -d '$ip' --dport $targetPort -m owner --uid-owner $uid -j REDIRECT --to-ports $localPort"
+            runSu("iptables -t nat -C OUTPUT $rule 2>/dev/null || iptables -t nat -A OUTPUT $rule")
         }
     }
 
-    private fun removeRedirectRules(targetPort: Int, localPort: Int) {
+    private fun removeActiveRedirectRules() {
+        val targetPort = activeTargetPort ?: return
+        val localPort = activeLocalPort ?: return
         val uid = applicationInfo.uid
         activeIps.forEach { ip ->
-            val cmd = "while iptables -t nat -C OUTPUT -p tcp -d '$ip' --dport $targetPort -m owner --uid-owner $uid -j REDIRECT --to-ports $localPort 2>/dev/null; do " +
-                "iptables -t nat -D OUTPUT -p tcp -d '$ip' --dport $targetPort -m owner --uid-owner $uid -j REDIRECT --to-ports $localPort; done"
-            runSu(cmd)
+            val rule = "-p tcp -d '$ip' --dport $targetPort -m owner --uid-owner $uid -j REDIRECT --to-ports $localPort"
+            runSu("while iptables -t nat -C OUTPUT $rule 2>/dev/null; do iptables -t nat -D OUTPUT $rule; done")
         }
         activeIps = emptyList()
+        activeTargetPort = null
+        activeLocalPort = null
     }
 
-    private fun registerNetworkMonitor(host: String, targetPort: Int, localPort: Int) {
+    private fun registerNetworkMonitor(targetPort: Int, localPort: Int) {
         if (networkCallback != null) return
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
         val cb = object : ConnectivityManager.NetworkCallback() {
@@ -215,10 +220,8 @@ class FakeSniService : Service() {
                 restartJob?.cancel()
                 restartJob = scope.launch {
                     delay(1500)
-                    val prefs = FakeSniPreferences(this@FakeSniService)
-                    if (!prefs.enabled) return@launch
+                    if (!FakeSniPreferences(this@FakeSniService).enabled) return@launch
                     log("Network changed — rebuilding FakeSNI route")
-                    removeRedirectRules(targetPort, localPort)
                     startProxy()
                 }
             }
@@ -236,18 +239,14 @@ class FakeSniService : Service() {
     private fun cleanupProcessOnly() {
         process?.destroy()
         process = null
+        runSu("pkill -TERM -f '$BINARY_NAME' 2>/dev/null || true")
     }
 
     private fun cleanup() {
         unregisterNetworkMonitor()
+        restartJob?.cancel()
         cleanupProcessOnly()
-        val prefs = FakeSniPreferences(this)
-        removeRedirectRules(443, prefs.listenPort)
-        // Remove rules for non-443 profiles as well; exact delete is harmless when absent.
-        val uid = applicationInfo.uid
-        activeIps.forEach { ip ->
-            runSu("iptables -t nat -F OUTPUT 2>/dev/null || true")
-        }
+        removeActiveRedirectRules()
     }
 
     private fun runSu(command: String) {
@@ -256,9 +255,7 @@ class FakeSniService : Service() {
 
     private fun shellEscape(value: String): String = value.replace("'", "'\\''")
 
-    private fun log(message: String) {
-        android.util.Log.i("IntegratedFakeSNI", message)
-    }
+    private fun log(message: String) = android.util.Log.i("IntegratedFakeSNI", message)
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
