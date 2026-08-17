@@ -19,58 +19,46 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HAS_RELEASE_KEYSTORE: ${{ secrets.APP_KEYSTORE_BASE64 != '' && secrets.APP_KEYSTORE_PASSWORD != '' && secrets.APP_KEYSTORE_ALIAS != '' && secrets.APP_KEY_PASSWORD != '' }}
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v7
       with:
         submodules: 'recursive'
         fetch-depth: '0'
-
     - name: Setup Android SDK
       uses: android-actions/setup-android@v4
       with:
         log-accepted-android-sdk-licenses: false
         cmdline-tools-version: '14742923'
         packages: 'platforms;android-37.0 build-tools;37.0.0 platform-tools'
-
     - name: Install NDK
       run: |
-        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-          --channel=0 \
-          --install "ndk;29.0.14206865"
+        echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --channel=0 --install "ndk;29.0.14206865"
         echo "NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
         sed -i '/^android {/a\    ndkVersion = "29.0.14206865"' ${{ github.workspace }}/V2rayNG/app/build.gradle.kts
-
     - name: Restore cached libhevtun
       id: cache-libhevtun-restore
       uses: actions/cache/restore@v6
       with:
         path: ${{ github.workspace }}/libs
         key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
-
     - name: Build libhevtun
       if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
       run: bash compile-hevtun.sh
-
     - name: Save libhevtun
       if: steps.cache-libhevtun-restore.outputs.cache-hit != 'true'
       uses: actions/cache/save@v6
       with:
         path: ${{ github.workspace }}/libs
         key: libhevtun-${{ runner.os }}-${{ env.NDK_HOME }}-${{ hashFiles('.git/modules/hev-socks5-tunnel/HEAD') }}-${{ hashFiles('compile-hevtun.sh') }}
-
     - name: Copy libhevtun
       run: cp -r ${{ github.workspace }}/libs ${{ github.workspace }}/V2rayNG/app
-
     - name: Fetch AndroidLibXrayLite tag
       run: |
         pushd AndroidLibXrayLite
         CURRENT_TAG=$(git describe --tags --abbrev=0)
-        echo "Current tag in this repo: $CURRENT_TAG"
         echo "CURRENT_TAG=$CURRENT_TAG" >> $GITHUB_ENV
         popd
-
     - name: Download libv2ray
       uses: robinraju/release-downloader@v1.13
       with:
@@ -78,13 +66,11 @@ jobs:
         tag: ${{ env.CURRENT_TAG }}
         fileName: 'libv2ray.aar'
         out-file-path: V2rayNG/app/libs/
-
     - name: Setup Java
       uses: actions/setup-java@v5.7.0
       with:
         distribution: 'temurin'
         java-version: '21'
-
     - name: Decode Keystore
       if: env.HAS_RELEASE_KEYSTORE == 'true'
       uses: timheuer/base64-to-file@v2.0.0
@@ -92,7 +78,6 @@ jobs:
       with:
         fileName: "android_keystore.jks"
         encodedString: ${{ secrets.APP_KEYSTORE_BASE64 }}
-
     - name: Build signed APK
       if: env.HAS_RELEASE_KEYSTORE == 'true'
       run: |
@@ -101,7 +86,6 @@ jobs:
         chmod 755 gradlew
         ./gradlew licenseFdroidReleaseReport
         ./gradlew assembleRelease -Pandroid.injected.signing.store.file=${{ steps.android_keystore.outputs.filePath }} -Pandroid.injected.signing.store.password=${{ secrets.APP_KEYSTORE_PASSWORD }} -Pandroid.injected.signing.key.alias=${{ secrets.APP_KEYSTORE_ALIAS }} -Pandroid.injected.signing.key.password=${{ secrets.APP_KEY_PASSWORD }}
-
     - name: Build unsigned test APK
       if: env.HAS_RELEASE_KEYSTORE != 'true'
       run: |
@@ -110,46 +94,47 @@ jobs:
         chmod 755 gradlew
         ./gradlew licenseFdroidReleaseReport
         ./gradlew assembleRelease
-
+    - name: Collect APKs
+      run: |
+        set -e
+        mkdir -p release-files
+        find "${{ github.workspace }}/V2rayNG/app/build/outputs/apk" -type f -name '*.apk' -print -exec cp {} release-files/ \;
+        echo "Collected APKs:"
+        ls -lah release-files
+        test -n "$(find release-files -maxdepth 1 -type f -name '*.apk' -print -quit)"
     - name: Upload APKs
-      if: success()
       uses: actions/upload-artifact@v7
       with:
         name: v2rayNG-fakesni-apks
-        path: ${{ github.workspace }}/V2rayNG/app/build/outputs/apk/*/release/*.apk
+        path: release-files/*.apk
         if-no-files-found: error
-
   release:
     needs: build
     if: needs.build.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - name: Download APK artifacts
-        uses: actions/download-artifact@v8
-        with:
-          name: v2rayNG-fakesni-apks
-          path: release-files
-
-      - name: Show APKs
-        run: ls -lh release-files
-
-      - name: Generate release tag
-        id: tag
-        env:
-          INPUT_TAG: ${{ inputs.release_tag }}
-          RUN_NUMBER: ${{ github.run_number }}
-        run: |
-          if [ -n "$INPUT_TAG" ]; then
-            echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=v2.3.4-fakesni-build.$RUN_NUMBER" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create GitHub Release and upload APKs
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: v2rayNG + FakeSNI ${{ steps.tag.outputs.tag }}
-          prerelease: true
-          generate_release_notes: true
-          files: release-files/*.apk
+    - name: Download APK artifacts
+      uses: actions/download-artifact@v8
+      with:
+        name: v2rayNG-fakesni-apks
+        path: release-files
+    - name: Verify APK files
+      run: |
+        set -e
+        find release-files -type f -name '*.apk' -print
+        test -n "$(find release-files -type f -name '*.apk' -print -quit)"
+    - name: Generate release tag
+      id: tag
+      env:
+        INPUT_TAG: ${{ inputs.release_tag }}
+        RUN_NUMBER: ${{ github.run_number }}
+      run: |
+        if [ -n "$INPUT_TAG" ]; then echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"; else echo "tag=v2.3.4-fakesni-build.$RUN_NUMBER" >> "$GITHUB_OUTPUT"; fi
+    - name: Create GitHub Release and upload APKs
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ steps.tag.outputs.tag }}
+        name: v2rayNG + FakeSNI ${{ steps.tag.outputs.tag }}
+        prerelease: true
+        generate_release_notes: true
+        files: release-files/**/*.apk
