@@ -41,6 +41,7 @@ private fun FakeSniScreen(onBack: () -> Unit) {
     val prefs = remember { FakeSniPreferences(context) }
     var enabled by remember { mutableStateOf(prefs.enabled) }
     var fakeSni by remember { mutableStateOf(prefs.fakeSni) }
+    var upstream by remember { mutableStateOf(prefs.upstream) }
     var port by remember { mutableStateOf(prefs.listenPort.toString()) }
     var utls by remember { mutableStateOf(prefs.utls) }
     var injector by remember { mutableStateOf(prefs.injector) }
@@ -81,6 +82,14 @@ private fun FakeSniScreen(onBack: () -> Unit) {
                 onValueChange = { fakeSni = it; prefs.fakeSni = it },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Fake SNI") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = upstream,
+                onValueChange = { upstream = it; prefs.upstream = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Upstream") },
+                supportingText = { Text("Real destination, for example 104.16.2.189:443") },
                 singleLine = true
             )
             OutlinedTextField(
@@ -125,7 +134,7 @@ private fun FakeSniScreen(onBack: () -> Unit) {
             ) { Text("Apply / Restart FakeSNI") }
 
             Text(
-                "When enabled, v2rayNG redirects its own TCP connection to the selected TLS server to 127.0.0.1:${prefs.listenPort}. FakeSNI then connects to the real server and performs the SNI spoofing. Non-TLS profiles are left untouched.",
+                "The selected v2rayNG profile determines which destination is redirected to FakeSNI. FakeSNI then connects to the configured Upstream and sends the selected Fake SNI. Non-TLS profiles are left untouched.",
                 style = MaterialTheme.typography.bodySmall
             )
         }
