@@ -29,6 +29,7 @@ import com.v2ray.ang.ui.base.BaseComponentActivity
 import com.v2ray.ang.ui.compose.AppTopBar
 
 class FakeSniActivity : BaseComponentActivity() {
+    @Composable
     override fun ScreenContent() {
         FakeSniScreen(onBack = { finish() })
     }
