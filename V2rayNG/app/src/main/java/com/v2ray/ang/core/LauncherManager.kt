@@ -22,15 +22,12 @@ import com.v2ray.ang.util.LogUtil
 import com.v2ray.ang.util.Utils
 
 object LauncherManager {
-
     fun startServiceFromToggle(context: Context): Boolean {
         if (MmkvManager.getSelectServer().isNullOrEmpty()) {
             context.toast(R.string.app_tile_first_use)
             return false
         }
-        try {
-            startContextService(context)
-        } catch (e: Exception) {
+        try { startContextService(context) } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "LauncherManager: ${e.message}", e)
             context.toast(e.message ?: e.javaClass.simpleName)
             return false
@@ -40,14 +37,8 @@ object LauncherManager {
 
     fun startService(context: Context, guid: String? = null) {
         LogUtil.i(AppConfig.TAG, "LauncherManager: startService from ${context::class.java.simpleName}")
-
-        if (guid != null) {
-            MmkvManager.setSelectServer(guid)
-        }
-
-        try {
-            startContextService(context)
-        } catch (e: Exception) {
+        if (guid != null) MmkvManager.setSelectServer(guid)
+        try { startContextService(context) } catch (e: Exception) {
             LogUtil.e(AppConfig.TAG, "LauncherManager: ${e.message}", e)
             context.toast(e.message ?: e.javaClass.simpleName)
         }
@@ -58,59 +49,43 @@ object LauncherManager {
         MessageHelper.sendMsg2Service(context, AppConfig.MSG_STATE_STOP, "")
     }
 
-    /** Restarts the active daemon without starting a stopped service. */
     fun restartService(context: Context) {
-        if (FakeSniPreferences(context).enabled) {
+        if (!SettingsManager.isRootMode() && FakeSniPreferences(context).enabled) {
             FakeSniService.start(context)
         }
         MessageHelper.sendMsg2Service(context, AppConfig.MSG_STATE_RESTART, "")
     }
 
-    /** Restarts the active daemon, or delegates to the caller's permission-aware start flow. */
     fun restartServiceOrStart(context: Context, startIfStopped: () -> Unit) {
         MessageHelper.sendMsg2ServiceForResult(context, AppConfig.MSG_STATE_RESTART, "") { handled ->
             if (!handled) startIfStopped()
-            else if (FakeSniPreferences(context).enabled) FakeSniService.start(context)
+            else if (!SettingsManager.isRootMode() && FakeSniPreferences(context).enabled) FakeSniService.start(context)
         }
     }
 
     @Throws(Exception::class)
     private fun startContextService(context: Context) {
-        // Note: isRunning check is removed here to avoid loading Native libraries in the UI process.
-        // The check is performed in CoreServiceManager when the service starts in the daemon process.
+        val guid = MmkvManager.getSelectServer() ?: run {
+            LogUtil.e(AppConfig.TAG, "LauncherManager: No server selected")
+            error(context.getString(R.string.app_tile_first_use))
+        }
+        val config = MmkvManager.decodeServerConfig(guid) ?: run {
+            LogUtil.e(AppConfig.TAG, "LauncherManager: Failed to decode server config")
+            error(context.getString(R.string.toast_config_file_invalid))
+        }
 
-        val guid = MmkvManager.getSelectServer()
-            ?: run {
-                LogUtil.e(AppConfig.TAG, "LauncherManager: No server selected")
-                error(context.getString(R.string.app_tile_first_use))
-            }
-
-        val config = MmkvManager.decodeServerConfig(guid)
-            ?: run {
-                LogUtil.e(AppConfig.TAG, "LauncherManager: Failed to decode server config")
-                error(context.getString(R.string.toast_config_file_invalid))
-            }
-
-        if (!config.configType.isComplexType()
-            && !Utils.isValidUrl(config.server)
-            && !Utils.isPureIpAddress(config.server.orEmpty())
-        ) {
+        if (!config.configType.isComplexType() && !Utils.isValidUrl(config.server) && !Utils.isPureIpAddress(config.server.orEmpty())) {
             LogUtil.e(AppConfig.TAG, "LauncherManager: Invalid server configuration")
             error(context.getString(R.string.toast_config_file_invalid))
         }
 
         SettingsManager.refreshRuntimeSocksPort()
-
         if (config.insecure == true && config.pinnedCA256.isNullOrEmpty()) {
             context.toastError(R.string.toast_allow_insecure_deprecated)
             Utils.setClipboard(context, context.getString(R.string.toast_allow_insecure_deprecated))
         }
-
-        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PROXY_SHARING)) {
-            context.toast(R.string.toast_warning_pref_proxysharing_short)
-        } else {
-            context.toast(R.string.toast_services_start)
-        }
+        if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PROXY_SHARING)) context.toast(R.string.toast_warning_pref_proxysharing_short)
+        else context.toast(R.string.toast_services_start)
 
         val isRootMode = SettingsManager.isRootMode()
         if (isRootMode && !RootManager.isRootAvailable()) {
@@ -119,8 +94,7 @@ object LauncherManager {
         }
 
         // FakeSNI uses a rooted local TLS proxy and UID-scoped OUTPUT REDIRECT rules.
-        // It is intentionally disabled in v2rayNG root mode because both the Xray core
-        // and FakeSNI would run as UID 0 and could not be distinguished by xt_owner.
+        // Root mode is intentionally excluded because Xray and FakeSNI would both be UID 0.
         if (!isRootMode && FakeSniPreferences(context).enabled) {
             LogUtil.i(AppConfig.TAG, "LauncherManager: starting integrated FakeSNI")
             FakeSniService.start(context)
@@ -143,9 +117,7 @@ object LauncherManager {
             LogUtil.e(AppConfig.TAG, "LauncherManager: Missing permission to start foreground service", e)
             throw IllegalStateException(e.message ?: e.javaClass.simpleName, e)
         } catch (e: RuntimeException) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                e.javaClass.name == "android.app.ForegroundServiceStartNotAllowedException"
-            ) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && e.javaClass.name == "android.app.ForegroundServiceStartNotAllowedException") {
                 LogUtil.e(AppConfig.TAG, "LauncherManager: Foreground service start not allowed", e)
                 throw IllegalStateException(e.message ?: e.javaClass.simpleName, e)
             }
