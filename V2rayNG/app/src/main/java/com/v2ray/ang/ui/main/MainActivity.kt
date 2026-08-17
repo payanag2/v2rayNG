@@ -20,6 +20,7 @@ import com.v2ray.ang.enums.PermissionType
 import com.v2ray.ang.extension.toast
 import com.v2ray.ang.extension.toastError
 import com.v2ray.ang.extension.toastSuccess
+import com.v2ray.ang.fakesni.FakeSniActivity
 import com.v2ray.ang.handler.AngConfigManager
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsChangeManager
@@ -67,16 +68,10 @@ class MainActivity : HelperBaseComponentActivity() {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode != RESULT_OK) return@registerForActivityResult
             val data = result.data ?: return@registerForActivityResult
-            val action = data.getStringExtra(ProfileEditorResult.EXTRA_ACTION)
-                ?: return@registerForActivityResult
-            if (action != ProfileEditorResult.ACTION_SAVED &&
-                action != ProfileEditorResult.ACTION_DELETED
-            ) return@registerForActivityResult
-            val restartService = data.getBooleanExtra(
-                ProfileEditorResult.EXTRA_RESTART_SERVICE, false
-            )
-            val selectedProfileSaved = action == ProfileEditorResult.ACTION_SAVED &&
-                data.getStringExtra(ProfileEditorResult.EXTRA_GUID) == mainViewModel.uiState.value.selectedGuid
+            val action = data.getStringExtra(ProfileEditorResult.EXTRA_ACTION) ?: return@registerForActivityResult
+            if (action != ProfileEditorResult.ACTION_SAVED && action != ProfileEditorResult.ACTION_DELETED) return@registerForActivityResult
+            val restartService = data.getBooleanExtra(ProfileEditorResult.EXTRA_RESTART_SERVICE, false)
+            val selectedProfileSaved = action == ProfileEditorResult.ACTION_SAVED && data.getStringExtra(ProfileEditorResult.EXTRA_GUID) == mainViewModel.uiState.value.selectedGuid
             mainViewModel.onAction(MainAction.RefreshGroups)
             if (restartService || selectedProfileSaved) LauncherManager.restartService(this)
         }
@@ -93,7 +88,6 @@ class MainActivity : HelperBaseComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         mainViewModel.onAction(MainAction.Initialize)
-
         checkAndRequestPermission(PermissionType.POST_NOTIFICATIONS) {}
     }
 
@@ -123,15 +117,13 @@ class MainActivity : HelperBaseComponentActivity() {
         )
     }
 
-    private fun shareToClipboard(guid: String): Boolean =
-        AngConfigManager.share2Clipboard(this, guid) == 0
+    private fun shareToClipboard(guid: String): Boolean = AngConfigManager.share2Clipboard(this, guid) == 0
 
     private fun shareFullContentAsync(guid: String) {
         lifecycleScope.launch(Dispatchers.IO) {
             val result = AngConfigManager.shareFullContent2Clipboard(this@MainActivity, guid)
             withContext(Dispatchers.Main) {
-                if (result == 0) toastSuccess(R.string.toast_success)
-                else toastError(R.string.toast_failure)
+                if (result == 0) toastSuccess(R.string.toast_success) else toastError(R.string.toast_failure)
             }
         }
     }
@@ -142,16 +134,14 @@ class MainActivity : HelperBaseComponentActivity() {
             MainDestination.PerAppProxy -> Intent(this, PerAppProxyActivity::class.java)
             MainDestination.Routing -> Intent(this, RoutingSettingActivity::class.java)
             MainDestination.UserAssets -> Intent(this, UserAssetActivity::class.java)
+            MainDestination.FakeSni -> Intent(this, FakeSniActivity::class.java)
             MainDestination.Settings -> Intent(this, SettingsActivity::class.java)
             MainDestination.Logcat -> Intent(this, LogcatActivity::class.java)
             MainDestination.CheckUpdate -> Intent(this, CheckUpdateActivity::class.java)
             MainDestination.BackupRestore -> Intent(this, BackupActivity::class.java)
             MainDestination.About -> Intent(this, AboutActivity::class.java)
             MainDestination.Promotion -> {
-                Utils.openUri(
-                    this,
-                    "${Utils.decode(AppConfig.APP_PROMOTION_URL)}?t=${System.currentTimeMillis()}"
-                )
+                Utils.openUri(this, "${Utils.decode(AppConfig.APP_PROMOTION_URL)}?t=${System.currentTimeMillis()}")
                 return
             }
         }
@@ -159,11 +149,7 @@ class MainActivity : HelperBaseComponentActivity() {
     }
 
     private fun handleFabAction() {
-        if (mainViewModel.uiState.value.isRunning) {
-            LauncherManager.stopService(this)
-        } else {
-            requestServiceStart()
-        }
+        if (mainViewModel.uiState.value.isRunning) LauncherManager.stopService(this) else requestServiceStart()
     }
 
     private fun requestServiceStart() {
@@ -176,9 +162,7 @@ class MainActivity : HelperBaseComponentActivity() {
     }
 
     private fun handleLayoutTestClick() {
-        if (mainViewModel.uiState.value.isRunning) {
-            mainViewModel.testCurrentServerRealPing()
-        }
+        if (mainViewModel.uiState.value.isRunning) mainViewModel.testCurrentServerRealPing()
     }
 
     private fun startV2Ray() {
@@ -186,9 +170,7 @@ class MainActivity : HelperBaseComponentActivity() {
             toast(R.string.title_file_chooser)
             return
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN &&
-            MmkvManager.decodeSettingsBool(AppConfig.PREF_PROXY_SHARING)
-        ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.CINNAMON_BUN && MmkvManager.decodeSettingsBool(AppConfig.PREF_PROXY_SHARING)) {
             checkAndRequestPermission(PermissionType.ACCESS_LOCAL_NETWORK) {}
         }
         LauncherManager.startService(this)
@@ -206,21 +188,13 @@ class MainActivity : HelperBaseComponentActivity() {
             EConfigType.TROJAN.value -> Intent(this, ServerTrojanActivity::class.java)
             EConfigType.WIREGUARD.value -> Intent(this, ServerWireguardActivity::class.java)
             EConfigType.HYSTERIA2.value -> Intent(this, ServerHysteria2Activity::class.java)
-            else -> Intent(this, ServerHttpActivity::class.java).apply {
-                putExtra("createConfigType", createConfigType)
-            }
-        }.apply {
-            putExtra("subscriptionId", mainViewModel.uiState.value.selectedGroupId)
-        }
+            else -> Intent(this, ServerHttpActivity::class.java).apply { putExtra("createConfigType", createConfigType) }
+        }.apply { putExtra("subscriptionId", mainViewModel.uiState.value.selectedGroupId) }
         profileEditorLauncher.launch(intent)
     }
 
     private fun importQRcode() {
-        launchQRCodeScanner { scanResult ->
-            if (scanResult != null) {
-                mainViewModel.onAction(MainAction.ImportBatchConfig(scanResult))
-            }
-        }
+        launchQRCodeScanner { scanResult -> if (scanResult != null) mainViewModel.onAction(MainAction.ImportBatchConfig(scanResult)) }
     }
 
     private fun importClipboard() {
@@ -236,9 +210,7 @@ class MainActivity : HelperBaseComponentActivity() {
         launchFileChooser { uri ->
             if (uri == null) return@launchFileChooser
             try {
-                contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
-                    mainViewModel.onAction(MainAction.ImportBatchConfig(reader.readText()))
-                }
+                contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader -> mainViewModel.onAction(MainAction.ImportBatchConfig(reader.readText())) }
             } catch (e: Exception) {
                 LogUtil.e(AppConfig.TAG, "Failed to read content from URI", e)
             }
