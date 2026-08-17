@@ -40,9 +40,10 @@ private fun FakeSniScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { FakeSniPreferences(context) }
     var enabled by remember { mutableStateOf(prefs.enabled) }
-    var fakeSni by remember { mutableStateOf(prefs.fakeSni) }
-    var upstream by remember { mutableStateOf(prefs.upstream) }
-    var port by remember { mutableStateOf(prefs.listenPort.toString()) }
+    var fakeSniHostname by remember { mutableStateOf(prefs.fakeSniHostname) }
+    var connectIp by remember { mutableStateOf(prefs.connectIp) }
+    var connectPort by remember { mutableStateOf(prefs.connectPort.toString()) }
+    var listenPort by remember { mutableStateOf(prefs.listenPort.toString()) }
     var utls by remember { mutableStateOf(prefs.utls) }
     var injector by remember { mutableStateOf(prefs.injector) }
     var fragment by remember { mutableStateOf(prefs.enableFragment) }
@@ -78,28 +79,39 @@ private fun FakeSniScreen(onBack: () -> Unit) {
             }
 
             OutlinedTextField(
-                value = fakeSni,
-                onValueChange = { fakeSni = it; prefs.fakeSni = it },
+                value = fakeSniHostname,
+                onValueChange = { fakeSniHostname = it; prefs.fakeSniHostname = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Fake SNI") },
+                label = { Text("Fake SNI Hostname") },
                 singleLine = true
             )
             OutlinedTextField(
-                value = upstream,
-                onValueChange = { upstream = it; prefs.upstream = it },
+                value = connectIp,
+                onValueChange = { connectIp = it; prefs.connectIp = it },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Upstream") },
-                supportingText = { Text("Real destination, for example 104.16.2.189:443") },
+                label = { Text("Connect IP") },
+                supportingText = { Text("Real upstream IP, for example 104.16.2.189") },
                 singleLine = true
             )
             OutlinedTextField(
-                value = port,
+                value = connectPort,
                 onValueChange = {
-                    port = it
+                    connectPort = it
+                    it.toIntOrNull()?.let { value -> prefs.connectPort = value }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Connect Port") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = listenPort,
+                onValueChange = {
+                    listenPort = it
                     it.toIntOrNull()?.let { value -> prefs.listenPort = value.coerceIn(1024, 65535) }
                 },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Local port") },
+                label = { Text("Listen Port") },
+                supportingText = { Text("Local FakeSNI port, normally 40443") },
                 singleLine = true
             )
             OutlinedTextField(
@@ -132,11 +144,6 @@ private fun FakeSniScreen(onBack: () -> Unit) {
                 onClick = { if (enabled) FakeSniService.start(context) },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Apply / Restart FakeSNI") }
-
-            Text(
-                "The selected v2rayNG profile determines which destination is redirected to FakeSNI. FakeSNI then connects to the configured Upstream and sends the selected Fake SNI. Non-TLS profiles are left untouched.",
-                style = MaterialTheme.typography.bodySmall
-            )
         }
     }
 }
