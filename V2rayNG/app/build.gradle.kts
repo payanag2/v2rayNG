@@ -24,12 +24,7 @@ android {
                 if (!abiFilterList.isNullOrEmpty()) {
                     include(*abiFilterList.toTypedArray())
                 } else {
-                    include(
-                        "arm64-v8a",
-                        "armeabi-v7a",
-                        "x86_64",
-                        "x86"
-                    )
+                    include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
                 }
                 isUniversalApk = abiFilterList.isNullOrEmpty()
             }
@@ -41,10 +36,7 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 
@@ -62,9 +54,7 @@ android {
     }
 
     sourceSets {
-        getByName("main") {
-            jniLibs.srcDirs("libs")
-        }
+        getByName("main") { jniLibs.srcDirs("libs") }
     }
 
     compileOptions {
@@ -74,51 +64,33 @@ android {
     }
 
     kotlin {
-        compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-        }
+        compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
     }
 
     applicationVariants.all {
         val variant = this
         val isFdroid = variant.productFlavors.any { it.name == "fdroid" }
         if (isFdroid) {
-            val versionCodes =
-                mapOf(
-                    "armeabi-v7a" to 2, "arm64-v8a" to 1, "x86" to 4, "x86_64" to 3, "universal" to 0
-                )
-
+            val versionCodes = mapOf("armeabi-v7a" to 2, "arm64-v8a" to 1, "x86" to 4, "x86_64" to 3, "universal" to 0)
             variant.outputs
                 .map { it as com.android.build.gradle.internal.api.ApkVariantOutputImpl }
                 .forEach { output ->
                     val abi = output.getFilter("ABI") ?: "universal"
                     output.outputFileName = "v2rayNG_${variant.versionName}-fdroid_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
-                        output.versionCodeOverride =
-                            (100 * variant.versionCode + versionCodes[abi]!!).plus(5000000)
-                    } else {
-                        return@forEach
-                    }
+                        output.versionCodeOverride = (100 * variant.versionCode + versionCodes[abi]!!).plus(5000000)
+                    } else return@forEach
                 }
         } else {
-            val versionCodes =
-                mapOf("armeabi-v7a" to 4, "arm64-v8a" to 4, "x86" to 4, "x86_64" to 4, "universal" to 4)
-
+            val versionCodes = mapOf("armeabi-v7a" to 4, "arm64-v8a" to 4, "x86" to 4, "x86_64" to 4, "universal" to 4)
             variant.outputs
                 .map { it as com.android.build.gradle.internal.api.ApkVariantOutputImpl }
                 .forEach { output ->
-                    val abi = if (output.getFilter("ABI") != null)
-                        output.getFilter("ABI")
-                    else
-                        "universal"
-
+                    val abi = output.getFilter("ABI") ?: "universal"
                     output.outputFileName = "v2rayNG_${variant.versionName}_${abi}.apk"
                     if (versionCodes.containsKey(abi)) {
-                        output.versionCodeOverride =
-                            (1000000 * versionCodes[abi]!!).plus(variant.versionCode)
-                    } else {
-                        return@forEach
-                    }
+                        output.versionCodeOverride = (1000000 * versionCodes[abi]!!).plus(variant.versionCode)
+                    } else return@forEach
                 }
         }
     }
@@ -130,39 +102,48 @@ android {
 
     androidResources {
         generateLocaleConfig = true
-        localeFilters += listOf(
-            "en",
-            "zh-rCN",
-            "zh-rTW",
-            "vi",
-            "ru",
-            "fa",
-            "ar",
-            "bn",
-            "bqi-rIR"
-        )
+        localeFilters += listOf("en", "zh-rCN", "zh-rTW", "vi", "ru", "fa", "ar", "bn", "bqi-rIR")
+        noCompress += listOf("arm64", "arm7")
     }
 
     packaging {
-        jniLibs {
-            useLegacyPackaging = true
-        }
+        jniLibs { useLegacyPackaging = true }
     }
-
 }
 
-dependencies {
-    // Core Libraries
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
+// FakeSNI's native Go executable is intentionally pinned to the exact source commit
+// used by payanag2/fakesni. This keeps the integrated APK aligned with the standalone app
+// without duplicating a 7–8 MB binary in Git history. CI/build machines need network access.
+val fakeSniCommit = "e4c09c584b3b8d47fbfc5075ac8dde1570bdc513"
+val fakeSniAssets = mapOf(
+    "sni-spoofing-arm64" to "https://raw.githubusercontent.com/payanag2/fakesni/$fakeSniCommit/app/src/main/assets/sni-spoofing-arm64",
+    "sni-spoofing-arm7" to "https://raw.githubusercontent.com/payanag2/fakesni/$fakeSniCommit/app/src/main/assets/sni-spoofing-arm7",
+)
 
-    // AndroidX Core Libraries
+tasks.register("downloadFakeSniAssets") {
+    val assetsDir = file("src/main/assets")
+    outputs.files(fakeSniAssets.keys.map { File(assetsDir, it) })
+    doLast {
+        assetsDir.mkdirs()
+        fakeSniAssets.forEach { (name, url) ->
+            val target = File(assetsDir, name)
+            if (!target.exists() || target.length() == 0L) {
+                logger.lifecycle("Downloading integrated FakeSNI binary: $name")
+                java.net.URL(url).openStream().use { input -> target.outputStream().use { output -> input.copyTo(output) } }
+            }
+            check(target.length() > 1024) { "FakeSNI asset $name was not downloaded correctly" }
+        }
+    }
+}
+
+tasks.named("preBuild") { dependsOn("downloadFakeSniAssets") }
+
+dependencies {
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
-
-    // Compose Libraries
     implementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(platform(libs.androidx.compose.bom))
-
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.foundation)
@@ -170,37 +151,22 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.coil.compose)
-
     debugImplementation(libs.androidx.compose.ui.tooling)
-
-    // Data and Storage Libraries
     implementation(libs.mmkv.static)
     implementation(libs.gson)
     implementation(libs.okhttp)
-
-    // Reactive and Utility Libraries
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.coroutines.core)
-
-    // QR Code: CameraX + ZXing
     implementation(libs.camerax.core)
     implementation(libs.camerax.camera2)
     implementation(libs.camerax.lifecycle)
     implementation(libs.camerax.compose)
-    implementation(libs.core) // zxing core
-
-    // AndroidX Lifecycle and Architecture Components
+    implementation(libs.core)
     implementation(libs.lifecycle.viewmodel.ktx)
     implementation(libs.lifecycle.runtime.ktx)
-
-    // Background Task Libraries
     implementation(libs.work.runtime.ktx)
     implementation(libs.work.multiprocess)
-
-    // Reorderable list
     implementation(libs.reorderable)
-
-    // Testing Libraries
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
