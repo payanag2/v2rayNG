@@ -13,6 +13,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.v2ray.ang.R
 import com.v2ray.ang.handler.MmkvManager
+import com.v2ray.ang.root.RootManager
 import java.io.File
 import java.net.Inet4Address
 import java.net.InetAddress
@@ -25,7 +26,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/** Integrated runner for the sni-spoofing binary from payanag2/fakesni. */
+/** Integrated runner for the rooted sni-spoofing binary from payanag2/fakesni. */
 class FakeSniService : Service() {
     companion object {
         const val ACTION_START = "com.v2ray.ang.fakesni.START"
@@ -69,7 +70,7 @@ class FakeSniService : Service() {
                     stopSelf()
                     return START_NOT_STICKY
                 }
-                startForeground(NOTIFICATION_ID, notification("Starting FakeSNI…"))
+                startForeground(NOTIFICATION_ID, notification("Checking root access…"))
                 restartJob?.cancel()
                 restartJob = scope.launch { startProxy() }
             }
@@ -87,6 +88,15 @@ class FakeSniService : Service() {
         cleanupProcessOnly()
         removeActiveRedirectRules()
 
+        // FakeSNI's packet interception and binary execution require root.
+        // v2rayNG itself does not need to run in root mode: Xray should keep its
+        // normal application UID so the UID-scoped iptables REDIRECT can match it.
+        if (!RootManager.isRootAvailable()) {
+            log("Root is required for integrated FakeSNI")
+            updateNotification("FakeSNI requires root access")
+            return
+        }
+
         val guid = MmkvManager.getSelectServer() ?: run {
             log("No selected profile")
             return
@@ -99,6 +109,7 @@ class FakeSniService : Service() {
 
         if (profile.security?.lowercase() != "tls") {
             log("FakeSNI requires TLS; selected profile is not TLS")
+            updateNotification("FakeSNI requires a TLS profile")
             return
         }
         val host = profile.server?.takeIf { it.isNotBlank() } ?: run {
@@ -113,6 +124,7 @@ class FakeSniService : Service() {
         val addresses = resolveIpv4(host)
         if (addresses.isEmpty()) {
             log("Could not resolve $host")
+            updateNotification("Could not resolve server")
             return
         }
 
@@ -155,7 +167,7 @@ class FakeSniService : Service() {
         process = Runtime.getRuntime().exec(arrayOf("su", "-c", "sh '${script.absolutePath}'"))
         scope.launch { process?.errorStream?.bufferedReader()?.forEachLine { log(it) } }
         scope.launch { process?.inputStream?.bufferedReader()?.forEachLine { log(it) } }
-        registerNetworkMonitor(port, prefs.listenPort)
+        registerNetworkMonitor()
     }
 
     private fun extractBinary(): File? {
@@ -212,7 +224,7 @@ class FakeSniService : Service() {
         activeLocalPort = null
     }
 
-    private fun registerNetworkMonitor(targetPort: Int, localPort: Int) {
+    private fun registerNetworkMonitor() {
         if (networkCallback != null) return
         val cm = getSystemService(ConnectivityManager::class.java) ?: return
         val cb = object : ConnectivityManager.NetworkCallback() {
