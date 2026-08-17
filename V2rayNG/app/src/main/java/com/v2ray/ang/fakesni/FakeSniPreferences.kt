@@ -14,9 +14,14 @@ class FakeSniPreferences(context: Context) {
         get() = prefs.getString("fakeSni", "hcaptcha.com") ?: "hcaptcha.com"
         set(value) = prefs.edit().putString("fakeSni", value).apply()
 
+    /** Real upstream used by FakeSNI, in host:port form. */
+    var upstream: String
+        get() = prefs.getString("upstream", "104.19.229.21:443") ?: "104.19.229.21:443"
+        set(value) = prefs.edit().putString("upstream", value).apply()
+
     var listenPort: Int
         get() = prefs.getInt("listenPort", 40443)
-        set(value) = prefs.edit().putInt("listenPort", value).apply()
+        set(value) = prefs.edit().putInt("listenPort", value.coerceIn(1024, 65535)).apply()
 
     var utls: String
         get() = prefs.getString("utls", "firefox") ?: "firefox"
