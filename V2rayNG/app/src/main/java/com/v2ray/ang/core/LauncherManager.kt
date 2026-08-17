@@ -9,6 +9,8 @@ import com.v2ray.ang.R
 import com.v2ray.ang.extension.isComplexType
 import com.v2ray.ang.extension.toast
 import com.v2ray.ang.extension.toastError
+import com.v2ray.ang.fakesni.FakeSniPreferences
+import com.v2ray.ang.fakesni.FakeSniService
 import com.v2ray.ang.handler.MmkvManager
 import com.v2ray.ang.handler.SettingsManager
 import com.v2ray.ang.helper.MessageHelper
@@ -52,12 +54,15 @@ object LauncherManager {
     }
 
     fun stopService(context: Context) {
-        //context.toast(R.string.toast_services_stop)
+        FakeSniService.stop(context)
         MessageHelper.sendMsg2Service(context, AppConfig.MSG_STATE_STOP, "")
     }
 
     /** Restarts the active daemon without starting a stopped service. */
     fun restartService(context: Context) {
+        if (FakeSniPreferences(context).enabled) {
+            FakeSniService.start(context)
+        }
         MessageHelper.sendMsg2Service(context, AppConfig.MSG_STATE_RESTART, "")
     }
 
@@ -65,6 +70,7 @@ object LauncherManager {
     fun restartServiceOrStart(context: Context, startIfStopped: () -> Unit) {
         MessageHelper.sendMsg2ServiceForResult(context, AppConfig.MSG_STATE_RESTART, "") { handled ->
             if (!handled) startIfStopped()
+            else if (FakeSniPreferences(context).enabled) FakeSniService.start(context)
         }
     }
 
@@ -110,6 +116,14 @@ object LauncherManager {
         if (isRootMode && !RootManager.isRootAvailable()) {
             LogUtil.e(AppConfig.TAG, "LauncherManager: root mode requires root but none available")
             error(context.getString(R.string.toast_root_required))
+        }
+
+        // FakeSNI uses a rooted local TLS proxy and UID-scoped OUTPUT REDIRECT rules.
+        // It is intentionally disabled in v2rayNG root mode because both the Xray core
+        // and FakeSNI would run as UID 0 and could not be distinguished by xt_owner.
+        if (!isRootMode && FakeSniPreferences(context).enabled) {
+            LogUtil.i(AppConfig.TAG, "LauncherManager: starting integrated FakeSNI")
+            FakeSniService.start(context)
         }
 
         val intent = if (isRootMode) {
