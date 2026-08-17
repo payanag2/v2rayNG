@@ -121,6 +121,17 @@ class FakeSniService : Service() {
             return
         }
 
+        // The v2rayNG profile determines which original destination is redirected.
+        // The FakeSNI Upstream field determines the actual destination used by the
+        // spoofing binary, matching the standalone FakeSNI application's behavior.
+        val upstream = parseUpstream(prefs.upstream) ?: run {
+            log("Invalid Upstream: ${prefs.upstream}. Expected host:port")
+            updateNotification("Invalid FakeSNI Upstream")
+            return
+        }
+        val upstreamHost = upstream.first
+        val upstreamPort = upstream.second
+
         val addresses = resolveIpv4(host)
         if (addresses.isEmpty()) {
             log("Could not resolve $host")
@@ -138,11 +149,10 @@ class FakeSniService : Service() {
             return
         }
 
-        val connectIp = addresses.first()
         val args = buildString {
             append("'${binary.absolutePath}'")
             append(" -listen '127.0.0.1:${prefs.listenPort}'")
-            append(" -connect '$connectIp:$port'")
+            append(" -connect '${shellEscape(upstreamHost)}:$upstreamPort'")
             append(" -fake-sni '${shellEscape(prefs.fakeSni)}'")
             append(" -utls '${shellEscape(prefs.utls)}'")
             append(" -injector ${shellEscape(prefs.injector)}")
@@ -156,9 +166,10 @@ class FakeSniService : Service() {
             }
         }
 
-        log("Target: $host:$port → $connectIp:$port")
+        log("Redirect: $host:$port → 127.0.0.1:${prefs.listenPort}")
+        log("Upstream: $upstreamHost:$upstreamPort")
         log("Fake SNI: ${prefs.fakeSni} / uTLS: ${prefs.utls} / injector: ${prefs.injector}")
-        updateNotification("FakeSNI active: ${prefs.fakeSni}")
+        updateNotification("FakeSNI active: ${prefs.fakeSni} → $upstreamHost:$upstreamPort")
 
         val script = File(filesDir, "fakesni-launch.sh")
         script.writeText("#!/system/bin/sh\nchmod 755 '${binary.absolutePath}'\nexec $args\n")
@@ -168,6 +179,26 @@ class FakeSniService : Service() {
         scope.launch { process?.errorStream?.bufferedReader()?.forEachLine { log(it) } }
         scope.launch { process?.inputStream?.bufferedReader()?.forEachLine { log(it) } }
         registerNetworkMonitor()
+    }
+
+    private fun parseUpstream(value: String): Pair<String, Int>? {
+        val input = value.trim()
+        if (input.isEmpty()) return null
+        val host: String
+        val portText: String
+        if (input.startsWith("[")) {
+            val end = input.indexOf(']')
+            if (end <= 1 || end + 2 > input.length || input[end + 1] != ':') return null
+            host = input.substring(1, end)
+            portText = input.substring(end + 2)
+        } else {
+            val separator = input.lastIndexOf(':')
+            if (separator <= 0 || separator == input.length - 1) return null
+            host = input.substring(0, separator)
+            portText = input.substring(separator + 1)
+        }
+        val port = portText.toIntOrNull()?.takeIf { it in 1..65535 } ?: return null
+        return host to port
     }
 
     private fun extractBinary(): File? {
